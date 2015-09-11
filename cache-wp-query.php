@@ -101,14 +101,10 @@ class Cache_WP_Query {
 
 		$this->reset();
 
-		if ( ( ! empty( $query->query_vars['cache_results'] ) || ! empty( $query->query_vars['s'] ) ) && ! empty( $query->query_vars['post_type'] ) ) {
-			$post_types = (array) $query->query_vars['post_type'];
+		if ( ! empty( $query->query_vars['cache_query'] ) || ! empty( $query->query_vars['s'] ) ) {
+			$this->query_vars = $query->query_vars;
 
-			if ( in_array( 'post', $post_types ) || in_array( 'cmm_article', $post_types ) ) {
-				$this->query_vars = $query->query_vars;
-
-				$cache_key = $this->get_cache_key();
-			}
+			$cache_key = $this->get_cache_key();
 		}
 
 	}
