@@ -33,7 +33,7 @@ function my_cache_wp_query_post_types() {
 	add_post_type_support( 'my_cpt', 'cache_wp_query' );
 
 }
-add_filter( 'init', 'cache_wp_query_post_types' );
+add_filter( 'init', 'my_cache_wp_query_post_types' );
 ```
 
 Searches are cached by default (assuming post types are all in the list above), but this can be disabled.
