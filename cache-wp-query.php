@@ -2,12 +2,17 @@
 /**
  * Plugin Name:       Cache WP_Query
  * Plugin URI:        https://github.com/sc0ttkclark/cache-wp-query
- * Description:       Cache posts from WP_Query in an automatic wrapper for WP_Query, avoid extra DB requests
- * Version:           0.1
+ * Description:       Cache posts from WP_Query in an automatic wrapper for WP_Query, avoid extra DB requests. Note: This should be installed as an mu-plugin
+ * Version:           0.2
  * Author:            Scott Kingsley Clark
  * Author URI:        http://scottkclark.com/
  */
 class Cache_WP_Query {
+
+	/**
+	 * @var array Allowed post types to cache
+	 */
+	public $post_types = array();
 
 	/**
 	 * @var array Current query
@@ -48,14 +53,17 @@ class Cache_WP_Query {
 	 */
 	public function setup() {
 
+		// Setup post types
+		$this->post_types = apply_filters( 'cache_wp_query_post_types', $this->post_types );
+
 		// Skip EP integration if we have cache
 		add_filter( 'ep_skip_query_integration', array( $this, 'filter_ep_skip_query_integration' ), 10, 2 );
 
 		// Reset data
-		add_action( 'pre_get_posts', array( $this, 'action_pre_get_posts' ), 9 );
+		add_action( 'pre_get_posts', array( $this, 'action_pre_get_posts' ), 4 );
 
 		// Make sure we return nothing for MySQL posts query
-		add_filter( 'posts_request', array( $this, 'filter_posts_request' ), 11, 2 );
+		add_filter( 'posts_request', array( $this, 'filter_posts_request' ), 9, 2 );
 
 		// Nukes the FOUND_ROWS() database query
 		add_filter( 'found_posts_query', array( $this, 'filter_found_posts_query' ), 6, 2 );
@@ -72,6 +80,12 @@ class Cache_WP_Query {
 		// Hook into ElasticPress search integration
 		add_action( 'ep_wp_query_search', array( $this, 'ep_wp_query_search' ), 10, 3 );
 
+		// Handle publish transitions
+		add_action( 'transition_post_status', array( $this, 'transition_post_status' ), 10, 3 );
+
+		// Handle post saves
+		add_action( 'save_post', array( $this, 'reset_cache_key_salt' ), 10, 2 );
+
 	}
 
 	/**
@@ -81,10 +95,14 @@ class Cache_WP_Query {
 	public function filter_ep_skip_query_integration( $skip, $query ) {
 
 		if ( ! $skip && $query ) {
-			$cached_posts = $this->get_posts();
+			$cache_key = $this->get_cache_key();
 
-			if ( ! empty( $cached_posts ) ) {
-				$skip = true;
+			if ( ! empty( $cache_key ) ) {
+				$cached_posts = $this->get_posts();
+
+				if ( ! empty( $cached_posts ) ) {
+					$skip = true;
+				}
 			}
 		}
 
@@ -99,13 +117,7 @@ class Cache_WP_Query {
 	 */
 	public function action_pre_get_posts( $query ) {
 
-		$this->reset();
-
-		if ( ! empty( $query->query_vars['cache_query'] ) || ! empty( $query->query_vars['s'] ) ) {
-			$this->query_vars = $query->query_vars;
-
-			$cache_key = $this->get_cache_key();
-		}
+		$this->setup_query( $query );
 
 	}
 
@@ -172,6 +184,9 @@ class Cache_WP_Query {
 
 				if ( ! empty( $cached_posts ) ) {
 					$posts = $cached_posts;
+
+					$query->found_posts   = $this->found_posts;
+					$query->max_num_pages = $this->max_num_pages;
 				}
 			}
 		}
@@ -257,6 +272,34 @@ class Cache_WP_Query {
 	}
 
 	/**
+	 * Clear caches on post publish
+	 *
+	 * @param string  $old_status
+	 * @param string  $new_status
+	 * @param WP_Post $post
+	 */
+	public function transition_post_status( $old_status, $new_status, $post ) {
+
+		static $flushed;
+
+		if ( ! empty( $flushed ) ) {
+			return;
+		}
+
+		if ( $post && in_array( $post->post_type, $this->post_types ) && 'publish' === $new_status && $old_status !== $new_status ) {
+			$this->reset_cache_key_salt( $post->ID, $post );
+
+			// Flush Pods Caches
+			if ( function_exists( 'pods_api' ) ) {
+				pods_api()->cache_flush_pods();
+			}
+
+			$flushed = true;
+		}
+
+	}
+
+	/**
 	 * Get posts from cache
 	 *
 	 * @return bool|null|array
@@ -268,11 +311,11 @@ class Cache_WP_Query {
 		// Can be cached
 		$cache_key = $this->get_cache_key();
 
-		if ( ! empty( $cache_key ) ) {
+		if ( ! empty( $cache_key ) && empty( $_REQUEST['bypass_cache_wp_query'] ) ) {
 			$posts = $this->cached_posts;
 
 			if ( null === $posts ) {
-				$posts = get_transient( $cache_key );
+				$posts = $this->cache_get( $cache_key, 'cache-wp-query' );
 
 				if ( is_array( $posts ) && ! empty( $posts ) ) {
 					$posts = array_map( 'get_post', $posts );
@@ -280,11 +323,15 @@ class Cache_WP_Query {
 
 				if ( ! is_array( $posts ) || empty( $posts ) ) {
 					$posts = array();
+
+					$this->cached_posts = null;
+				} else {
+					$this->cached_posts = $posts;
 				}
 
-				$this->cached_posts = $posts;
-
-				$this->get_meta();
+				if ( ! empty( $posts ) ) {
+					$this->get_meta();
+				}
 			}
 		}
 
@@ -295,7 +342,7 @@ class Cache_WP_Query {
 	/**
 	 * Set posts to cache
 	 *
-	 * @param array $posts
+	 * @param array     $posts
 	 * @param \WP_Query $query
 	 */
 	public function set_posts( $posts, $query ) {
@@ -311,11 +358,17 @@ class Cache_WP_Query {
 
 				$posts_to_cache = wp_list_pluck( $posts, 'ID' );
 
-				set_transient( $cache_key, $posts_to_cache, 3 * DAY_IN_SECONDS );
+				if ( ! empty( $posts_to_cache ) ) {
+					$this->cache_set( $cache_key, $posts_to_cache, 'cache-wp-query', 30 * MINUTE_IN_SECONDS );
 
-				$this->cached_posts = $posts;
-			} else {
-				delete_transient( $cache_key );
+					$this->cached_posts = $posts;
+				} else {
+					$posts = array();
+				}
+			}
+
+			if ( empty( $posts ) ) {
+				$this->cache_clear( $cache_key, 'cache-wp-query' );
 
 				$this->cached_posts = array();
 			}
@@ -337,14 +390,14 @@ class Cache_WP_Query {
 		// Can be cached
 		$cache_key = $this->get_cache_key();
 
-		if ( ! empty( $cache_key ) ) {
+		if ( empty( $this->found_posts ) && empty( $this->max_num_pages ) && ! empty( $cache_key ) && empty( $_REQUEST['bypass_cache_wp_query'] ) ) {
 			$posts = $this->cached_posts;
 
 			if ( ! empty( $posts ) ) {
-				$meta = get_transient( $cache_key . '_meta' );
+				$meta = $this->cache_get( $cache_key . '_meta', 'cache-wp-query' );
 
 				if ( is_array( $meta ) && ! empty( $meta ) ) {
-					$this->found_posts = $meta['found_posts'];
+					$this->found_posts   = $meta['found_posts'];
 					$this->max_num_pages = $meta['max_num_pages'];
 				}
 			}
@@ -367,18 +420,20 @@ class Cache_WP_Query {
 
 		if ( ! empty( $cache_key ) ) {
 			if ( ! empty( $posts ) ) {
+				$this->found_posts   = $query->found_posts;
+				$this->max_num_pages = $query->max_num_pages;
+
 				$meta = array(
-					'found_posts'   => $query->found_posts,
-					'max_num_pages' => $query->max_num_pages,
+					'found_posts'   => $this->found_posts,
+					'max_num_pages' => $this->max_num_pages,
 				);
 
-				set_transient( $cache_key . '_meta', $meta, 3 * DAY_IN_SECONDS );
-
-				$this->cached_posts = $posts;
+				$this->cache_set( $cache_key . '_meta', $meta, 'cache-wp-query', 30 * MINUTE_IN_SECONDS );
 			} else {
-				delete_transient( $cache_key . '_meta' );
+				$this->cache_clear( $cache_key . '_meta', 'cache-wp-query' );
 
-				$this->cached_posts = array();
+				$this->found_posts   = null;
+				$this->max_num_pages = null;
 			}
 		}
 
@@ -396,14 +451,37 @@ class Cache_WP_Query {
 		if ( empty( $cache_key ) ) {
 			$cache_key = null;
 
-			if ( ! empty( $this->query_vars ) ) {
+			if ( ! empty( $this->query_vars ) && empty( $this->query_vars['cache_wp_query_skip'] ) ) {
 				$cache_key = md5( serialize( $this->query_vars ) );
+
+				$cache_key_salt = get_option( 'cache_wp_query_salt' );
+
+				if ( $cache_key_salt ) {
+					$cache_key .= '_' . $cache_key_salt;
+				}
 			}
 
 			$this->cache_key = $cache_key;
 		}
 
 		return $cache_key;
+
+	}
+
+	/**
+	 * Reset cache key salt on saving of a post
+	 *
+	 * @param int     $post_id
+	 * @param WP_Post $post
+	 */
+	public function reset_cache_key_salt( $post_id, $post ) {
+
+		if ( ! in_array( $post->post_type, $this->post_types ) ) {
+			return;
+		}
+
+		delete_option( 'cache_wp_query_salt' );
+		add_option( 'cache_wp_query_salt', time(), '', 'yes' );
 
 	}
 
@@ -418,6 +496,97 @@ class Cache_WP_Query {
 		$this->cached_posts  = null;
 		$this->found_posts   = null;
 		$this->max_num_pages = null;
+
+	}
+
+	/**
+	 * Setup query for caching
+	 *
+	 * @param \WP_Query $query
+	 */
+	public function setup_query( $query ) {
+
+		$this->reset();
+
+		$cache = false;
+
+		if ( ( ! empty( $query->query_vars['cache_wp_query'] ) || ! empty( $query->query_vars['cache_results'] ) || ! empty( $query->query_vars['ep_integrate'] ) ) && ! empty( $query->query_vars['post_type'] ) ) {
+			$post_types = (array) $query->query_vars['post_type'];
+
+			$cache = true;
+
+			foreach ( $post_types as $post_type ) {
+				if ( ! in_array( $post_type, $this->post_types ) ) {
+					$cache = false;
+
+					break;
+				}
+			}
+		} elseif ( is_search() && ! empty( $query->query_vars['s'] ) && false !== apply_filters( 'cache_wp_query_search', true ) ) {
+			$cache = true;
+		}
+
+		if ( $cache ) {
+			$this->query_vars = $query->query_vars;
+
+			$this->get_posts();
+		}
+
+	}
+
+	/**
+	 * Get value from cache
+	 *
+	 * @param string $key   Cache key
+	 * @param string $group Cache group
+	 *
+	 * @return mixed
+	 */
+	public function cache_get( $key, $group ) {
+
+		$value = null;
+
+		if ( function_exists( 'pods_cache_get' ) ) {
+			$value = pods_cache_get( $key, $group );
+		} else {
+			$value = wp_cache_get( $key, $group );
+		}
+
+		return $value;
+
+	}
+
+	/**
+	 * Set cache value
+	 *
+	 * @param string   $key     Cache key
+	 * @param mixed    $value   Cache value
+	 * @param string   $group   Cache group
+	 * @param int|null $expires Cache expiration
+	 */
+	public function cache_set( $key, $value, $group, $expires ) {
+
+		if ( function_exists( 'pods_cache_set' ) ) {
+			pods_cache_set( $key, $value, $group, $expires );
+		} else {
+			wp_cache_set( $key, $value, $group, $expires );
+		}
+
+	}
+
+	/**
+	 * Clear cache
+	 *
+	 * @param string $key   Cache key
+	 * @param string $group Cache group
+	 */
+	public function cache_clear( $key, $group ) {
+
+		if ( function_exists( 'pods_cache_clear' ) ) {
+			pods_cache_clear( $key, $group );
+		} else {
+			wp_cache_delete( $key, $group );
+		}
 
 	}
 
