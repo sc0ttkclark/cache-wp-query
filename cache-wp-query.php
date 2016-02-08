@@ -3,7 +3,7 @@
  * Plugin Name:       Cache WP_Query
  * Plugin URI:        https://github.com/sc0ttkclark/cache-wp-query
  * Description:       Cache posts from WP_Query in an automatic wrapper for WP_Query, avoid extra DB requests. Note: This should be installed as an mu-plugin
- * Version:           0.2
+ * Version:           0.1
  * Author:            Scott Kingsley Clark
  * Author URI:        http://scottkclark.com/
  */
@@ -53,8 +53,8 @@ class Cache_WP_Query {
 	 */
 	public function setup() {
 
-		// Setup post types
-		$this->post_types = apply_filters( 'cache_wp_query_post_types', $this->post_types );
+		// Get supported post types
+		$this->get_supported_post_types();
 
 		// Skip EP integration if we have cache
 		add_filter( 'ep_skip_query_integration', array( $this, 'filter_ep_skip_query_integration' ), 10, 2 );
@@ -89,12 +89,27 @@ class Cache_WP_Query {
 	}
 
 	/**
+	 * Get post types that support Cache WP_Query
+	 */
+	public function get_supported_post_types() {
+
+		$post_types = get_post_types( array(), 'names' );
+
+		foreach ( $post_types as $post_type ) {
+			if ( post_type_supports( $post_type, 'cache_wp_query' ) ) {
+				$this->post_types[] = $post_type;
+			}
+		}
+
+	}
+
+	/**
 	 * @param boolean   $skip
 	 * @param \WP_Query $query
 	 */
 	public function filter_ep_skip_query_integration( $skip, $query ) {
 
-		if ( ! $skip && $query ) {
+		if ( ! $skip && false !== apply_filters( 'cache_wp_query_elasticpress', true ) && $query ) {
 			$cache_key = $this->get_cache_key();
 
 			if ( ! empty( $cache_key ) ) {
@@ -510,20 +525,33 @@ class Cache_WP_Query {
 
 		$cache = false;
 
-		if ( ( ! empty( $query->query_vars['cache_wp_query'] ) || ! empty( $query->query_vars['cache_results'] ) || ! empty( $query->query_vars['ep_integrate'] ) ) && ! empty( $query->query_vars['post_type'] ) ) {
-			$post_types = (array) $query->query_vars['post_type'];
-
+		if ( is_search() && ! empty( $query->query_vars['s'] ) && false !== apply_filters( 'cache_wp_query_search', true ) ) {
 			$cache = true;
+		} elseif ( ! empty( $query->query_vars['post_type'] ) ) {
+			$cache = false;
 
-			foreach ( $post_types as $post_type ) {
-				if ( ! in_array( $post_type, $this->post_types ) ) {
-					$cache = false;
+			if ( ! empty( $query->query_vars['cache_wp_query'] ) ) {
+				// Manual integration
+				$cache = true;
+			} elseif ( ! empty( $query->query_vars['ep_integrate'] ) && false !== apply_filters( 'cache_wp_query_elasticpress', true ) ) {
+				// ElasticPress integration
+				$cache = true;
+			}
 
-					break;
+			// Check that all post types in query are supported for caching
+			if ( $cache ) {
+				$post_types = (array) $query->query_vars['post_type'];
+
+				$cache = true;
+
+				foreach ( $post_types as $post_type ) {
+					if ( ! in_array( $post_type, $this->post_types ) ) {
+						$cache = false;
+
+						break;
+					}
 				}
 			}
-		} elseif ( is_search() && ! empty( $query->query_vars['s'] ) && false !== apply_filters( 'cache_wp_query_search', true ) ) {
-			$cache = true;
 		}
 
 		if ( $cache ) {
@@ -602,7 +630,7 @@ class Cache_WP_Query {
 		if ( ! $instance ) {
 			$instance = new self();
 
-			add_action( 'init', array( $instance, 'setup' ) );
+			add_action( 'init', array( $instance, 'setup' ), 99 );
 		}
 
 		return $instance;
