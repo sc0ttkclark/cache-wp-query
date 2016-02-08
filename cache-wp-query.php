@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Cache WP_Query
  * Plugin URI:        https://github.com/sc0ttkclark/cache-wp-query
- * Description:       Cache posts from WP_Query in an automatic wrapper for WP_Query, avoid extra DB requests. Note: This should be installed as an mu-plugin
+ * Description:       Cache posts from WP_Query in an automatic wrapper for WP_Query, avoid extra DB requests.
  * Version:           0.1
  * Author:            Scott Kingsley Clark
  * Author URI:        http://scottkclark.com/
