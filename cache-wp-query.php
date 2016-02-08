@@ -12,32 +12,32 @@ class Cache_WP_Query {
 	/**
 	 * @var array Allowed post types to cache
 	 */
-	public $post_types = array();
+	private $post_types = array();
 
 	/**
 	 * @var array Current query
 	 */
-	public $query_vars = array();
+	private $query_vars = array();
 
 	/**
 	 * @var null|string Cache key
 	 */
-	public $cache_key = null;
+	private $cache_key = null;
 
 	/**
 	 * @var array|null Cached posts
 	 */
-	public $cached_posts = null;
+	private $cached_posts = null;
 
 	/**
 	 * @var int|null Found posts
 	 */
-	public $found_posts = null;
+	private $found_posts = null;
 
 	/**
 	 * @var int|null Max num pages
 	 */
-	public $max_num_pages = null;
+	private $max_num_pages = null;
 
 	/**
 	 * Placeholder method
