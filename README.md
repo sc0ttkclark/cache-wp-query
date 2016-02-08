@@ -1,5 +1,11 @@
-# cache-wp-query
-Cache posts from WP_Query in an automatic wrapper for WP_Query, avoid extra DB requests. Integrates with ElasticPress to cache those requests too!
+# Cache WP_Query
+Cache WP_Query will cache posts from WP_Query through an automatic wrapper. It avoids extra DB requests and caches to object cache. Integrates with ElasticPress to cache those requests too!
+
+## Supports
+
+* ElasticPress
+* Pods (utilizing Pods caches)
+* Pods Alternative Cache (through Pods support, you can cache your query results to the filesystem)
 
 ## Usage
 
@@ -28,4 +34,11 @@ function my_cache_wp_query_post_types() {
 
 }
 add_filter( 'init', 'cache_wp_query_post_types' );
+```
+
+Searches are cached by default (assuming post types are all in the list above), but this can be disabled.
+
+```php
+// Disable default search caching
+add_filter( 'cache_wp_query_search', '__return_false' );
 ```
