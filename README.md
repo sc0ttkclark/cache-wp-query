@@ -1,4 +1,13 @@
 # Cache WP_Query
+
+## DEPRECATED
+
+WordPress 6.1 introduces [WP_Query caching](https://make.wordpress.org/core/2022/10/07/improvements-to-wp_query-performance-in-6-1/) which makes this repository no longer necessary. Enjoy!
+
+_Everything below here is from the original readme._
+
+## Description
+
 Cache WP_Query will cache posts from WP_Query through an automatic wrapper. It avoids extra DB requests and caches to object cache. Integrates with ElasticPress to cache those requests too!
 
 ## Supports
